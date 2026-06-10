@@ -27,7 +27,7 @@ def _group_by_texture(polygons):
 
 # ── OBJ + MTL ──────────────────────────────────────────────────────
 
-def write_obj_mtl(polygons, base_path):
+def write_obj_mtl(polygons, base_path, include_texture_refs=True):
     """Write .obj + .mtl pair.  base_path is the .obj path (e.g. map.obj)."""
     obj_path = base_path
     mtl_path = os.path.splitext(base_path)[0] + ".mtl"
@@ -42,7 +42,9 @@ def write_obj_mtl(polygons, base_path):
     vert_map = {}
     vi = uvi = ni = uv2i = 0
 
-    obj_lines = [f"# UT99 Map Export\n# Polygons: {len(polygons)}\nmtllib {mtl_rel}\n"]
+    obj_lines = [f"# UT99 Map Export\n# Polygons: {len(polygons)}\n"]
+    if include_texture_refs:
+        obj_lines[0] = f"# UT99 Map Export\n# Polygons: {len(polygons)}\nmtllib {mtl_rel}\n"
 
     # Pass 1: collect unique vert/uv/normal combos
     for poly in polygons:
@@ -77,13 +79,28 @@ def write_obj_mtl(polygons, base_path):
 
     obj_lines.append("")
 
-    # Pass 2: write faces grouped by texture
-    used_materials = set()
-    for tex_name, tex_polys in sorted(groups.items()):
-        mat_name = tex_name.replace(".", "_").replace("/", "_") if tex_name != "_null" else "null"
-        obj_lines.append(f"usemtl {mat_name}")
-        used_materials.add(tex_name)
-        for poly in tex_polys:
+    # Pass 2: write faces
+    if include_texture_refs:
+        used_materials = set()
+        for tex_name, tex_polys in sorted(groups.items()):
+            mat_name = tex_name.replace(".", "_").replace("/", "_") if tex_name != "_null" else "null"
+            obj_lines.append(f"usemtl {mat_name}")
+            used_materials.add(tex_name)
+            for poly in tex_polys:
+                face = []
+                for i in range(len(poly['vertices'])):
+                    pos = poly['vertices'][i]
+                    uv = poly['uvs'][i]
+                    nrm = poly['normal']
+                    uv2 = poly.get('uv_lightmap', (0.0, 0.0))
+                    key = (pos, uv, nrm, uv2)
+                    v_idx, vt_idx, vn_idx = vert_map[key]
+                    face.append(f"{v_idx+1}/{vt_idx+1}/{vn_idx+1}")
+                obj_lines.append(f"f {' '.join(face)}")
+            obj_lines.append("")
+    else:
+        used_materials = set()
+        for poly in polygons:
             face = []
             for i in range(len(poly['vertices'])):
                 pos = poly['vertices'][i]
@@ -99,24 +116,28 @@ def write_obj_mtl(polygons, base_path):
     with open(obj_path, 'w') as f:
         f.write('\n'.join(obj_lines) + '\n')
 
-    # Write MTL
-    mtl_lines = [f"# UT99 Map Materials\n"]
-    for tex_name in sorted(used_materials):
-        mat_name = tex_name.replace(".", "_").replace("/", "_") if tex_name != "_null" else "null"
-        tex_file = tex_name.replace('.', '/') if tex_name != "_null" else ""
-        mtl_lines.append(f"newmtl {mat_name}")
-        mtl_lines.append("Kd 0.8 0.8 0.8")
-        mtl_lines.append("Ka 0.2 0.2 0.2")
-        mtl_lines.append("Ks 0.0 0.0 0.0")
-        mtl_lines.append("d 1.0")
-        mtl_lines.append("illum 2")
-        if tex_name and tex_name != "_null":
-            tex_filename = tex_name.replace('.', '_') + ".png"
-            mtl_lines.append(f"map_Kd {tex_filename}")
-        mtl_lines.append("")
+    # Write MTL (only if texture refs enabled)
+    if include_texture_refs:
+        mtl_lines = [f"# UT99 Map Materials\n"]
+        for tex_name in sorted(used_materials):
+            mat_name = tex_name.replace(".", "_").replace("/", "_") if tex_name != "_null" else "null"
+            tex_file = tex_name.replace('.', '/') if tex_name != "_null" else ""
+            mtl_lines.append(f"newmtl {mat_name}")
+            mtl_lines.append("Kd 0.8 0.8 0.8")
+            mtl_lines.append("Ka 0.2 0.2 0.2")
+            mtl_lines.append("Ks 0.0 0.0 0.0")
+            mtl_lines.append("d 1.0")
+            mtl_lines.append("illum 2")
+            if tex_name and tex_name != "_null":
+                tex_filename = tex_name.replace('.', '_') + ".png"
+                mtl_lines.append(f"map_Kd {tex_filename}")
+            mtl_lines.append("")
 
-    with open(mtl_path, 'w') as f:
-        f.write('\n'.join(mtl_lines) + '\n')
+        with open(mtl_path, 'w') as f:
+            f.write('\n'.join(mtl_lines) + '\n')
+    else:
+        # Still write a minimal .obj with geometry only
+        pass
 
     print(f"  Wrote {len(unique_verts)} v, {len(unique_uvs)} vt, {len(unique_normals)} vn, "
           f"{len(polygons)} polys -> {obj_path} + .mtl")
@@ -142,7 +163,7 @@ def _gltf_type_str(typ):
     }.get(typ, "SCALAR")
 
 
-def write_gltf(polygons, output_path):
+def write_gltf(polygons, output_path, include_texture_refs=True):
     """Write a .gltf + .bin pair."""
     groups = _group_by_texture(polygons)
     bin_path = os.path.splitext(output_path)[0] + ".bin"
@@ -322,6 +343,8 @@ def write_gltf(polygons, output_path):
     # Build glTF JSON
     mat_index = 0
     materials = []
+    textures = []
+    images = []
     for tex_name in sorted(groups):
         mat_name = tex_name.replace(".", "_").replace("/", "_") if tex_name != "_null" else "null"
         mat = {
@@ -332,28 +355,18 @@ def write_gltf(polygons, output_path):
                 'roughnessFactor': 0.8,
             },
         }
-        if tex_name and tex_name != "_null":
+        if include_texture_refs and tex_name and tex_name != "_null":
             tex_filename = tex_name.replace('.', '_') + ".png"
             mat['pbrMetallicRoughness']['baseColorTexture'] = {
                 'index': mat_index,
             }
-        materials.append(mat)
-        mat_index += 1
-
-    textures = []
-    for tex_name in sorted(groups):
-        if tex_name and tex_name != "_null":
-            tex_filename = tex_name.replace('.', '_') + ".png"
             textures.append({
                 'name': tex_filename,
-                'source': len(textures),
+                'source': len(images),
             })
-
-    images = []
-    for tex_name in sorted(groups):
-        if tex_name and tex_name != "_null":
-            tex_filename = tex_name.replace('.', '_') + ".png"
             images.append({'uri': tex_filename})
+        materials.append(mat)
+        mat_index += 1
 
     doc = {
         'asset': {'version': "2.0", 'generator': "UT99 BSP Extractor"},

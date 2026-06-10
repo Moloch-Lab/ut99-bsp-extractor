@@ -17,6 +17,9 @@ from PySide6.QtGui import (
 
 from ut99bsp import extract_map, ExtractionResult
 
+MAG = "\U0001F4DD"
+SETTINGS_GEO = "Settings"
+
 
 SETTINGS_ORG = "MolochLab"
 SETTINGS_APP = "UT99-BSP-Extractor"
@@ -173,11 +176,12 @@ class WorkerSignals(QObject):
 
 
 class ExtractionWorker(threading.Thread):
-    def __init__(self, map_paths, fmt="obj", output_dir=None):
+    def __init__(self, map_paths, fmt="obj", output_dir=None, export_opts=None):
         super().__init__()
         self.map_paths = map_paths
         self.fmt = fmt
         self.output_dir = output_dir
+        self.export_opts = export_opts or {}
         self.signals = WorkerSignals()
         self.start_time = 0
 
@@ -192,7 +196,7 @@ class ExtractionWorker(threading.Thread):
                 os.makedirs(out_dir, exist_ok=True)
                 ext = ".obj" if self.fmt in ("obj", "objmtl") else ".gltf"
                 out_path = os.path.join(out_dir, base_name + ext)
-                result = extract_map(mp, out_path, fmt=self.fmt)
+                result = extract_map(mp, out_path, fmt=self.fmt, **self.export_opts)
                 self.signals.map_done.emit(mp, result)
             except Exception as e:
                 self.signals.error.emit(f"{base_name}: {e}")
@@ -424,6 +428,70 @@ class PreviewDialog(QDialog):
         l.addWidget(bar)
 
 
+class PreferencesDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Export Preferences")
+        self.setFixedSize(380, 220)
+        self.setStyleSheet("""
+            QDialog { background-color: #1e1e2e; }
+            QLabel { color: #cdd6f4; font-size: 13px; }
+            QCheckBox {
+                color: #cdd6f4; font-size: 13px; spacing: 8px;
+            }
+            QCheckBox::indicator {
+                width: 18px; height: 18px; border-radius: 4px;
+                border: 2px solid #45475a; background: #11111b;
+            }
+            QCheckBox::indicator:checked {
+                background: #89b4fa; border-color: #89b4fa;
+            }
+            QPushButton {
+                background-color: #89b4fa; color: #1e1e2e;
+                border: none; padding: 6px 20px; border-radius: 6px;
+                font-weight: bold; font-size: 12px;
+            }
+            QPushButton:hover { background-color: #74c7ec; }
+        """)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+        layout.setContentsMargins(20, 20, 20, 20)
+
+        title = QLabel("What to export:")
+        title.setStyleSheet("font-weight: bold; font-size: 14px; color: #a6adc8;")
+        layout.addWidget(title)
+
+        self.geo_check = QCheckBox("Export map geometry")
+        self.geo_check.setChecked(True)
+        layout.addWidget(self.geo_check)
+
+        self.tex_check = QCheckBox("Export textures (PNG from .utx packages)")
+        self.tex_check.setChecked(False)
+        layout.addWidget(self.tex_check)
+
+        self.ref_check = QCheckBox("Include texture references in output")
+        self.ref_check.setChecked(True)
+        layout.addWidget(self.ref_check)
+
+        layout.addStretch()
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        ok_btn = QPushButton("OK")
+        ok_btn.clicked.connect(self.accept)
+        btn_row.addWidget(ok_btn)
+        layout.addLayout(btn_row)
+
+        # Restore saved state
+        parent = self.parent()
+        if hasattr(parent, 'settings'):
+            s = parent.settings
+            self.geo_check.setChecked(s.value("export_geometry", True, type=bool))
+            self.tex_check.setChecked(s.value("export_textures", False, type=bool))
+            self.ref_check.setChecked(s.value("include_texture_refs", True, type=bool))
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -491,6 +559,10 @@ class MainWindow(QMainWindow):
         self.clear_act = QAction("\u2716  Clear", self)
         self.clear_act.triggered.connect(self._clear_queue)
         tb.addAction(self.clear_act)
+
+        self.prefs_act = QAction("\u2699  Preferences", self)
+        self.prefs_act.triggered.connect(self._open_prefs)
+        tb.addAction(self.prefs_act)
 
         tb.addSeparator()
 
@@ -636,6 +708,9 @@ class MainWindow(QMainWindow):
         c = QAction("Remove Selected", self, shortcut=QKeySequence.Delete, triggered=self._remove_selected)
         self.addAction(c)
 
+        d = QAction("Preferences", self, shortcut=QKeySequence("Ctrl+P"), triggered=self._open_prefs)
+        self.addAction(d)
+
     # ── Settings ──────────────────────────────────────────────────
 
     def _restore_settings(self):
@@ -760,7 +835,8 @@ class MainWindow(QMainWindow):
         self.progress.setValue(0)
         self.status_label.setText(f"Extracting {os.path.basename(path)}...")
 
-        worker = ExtractionWorker([path], fmt=self._fmt_to_arg(), output_dir=self.output_dir or None)
+        worker = ExtractionWorker([path], fmt=self._fmt_to_arg(), output_dir=self.output_dir or None,
+                                   export_opts=self._export_opts())
         worker.signals.map_done.connect(lambda p, r: (
             self._log(f"  \u2714 {os.path.basename(p)}: {r.polygons} polys"),
             self.results.append(r),
@@ -835,6 +911,22 @@ class MainWindow(QMainWindow):
     def _fmt_to_arg(self):
         return ["obj", "objmtl", "gltf"][self.fmt_combo.currentIndex()]
 
+    def _open_prefs(self):
+        dlg = PreferencesDialog(self)
+        if dlg.exec():
+            s = self.settings
+            s.setValue("export_geometry", dlg.geo_check.isChecked())
+            s.setValue("export_textures", dlg.tex_check.isChecked())
+            s.setValue("include_texture_refs", dlg.ref_check.isChecked())
+
+    def _export_opts(self):
+        s = self.settings
+        return {
+            'export_geometry': s.value("export_geometry", True, type=bool),
+            'export_textures': s.value("export_textures", False, type=bool),
+            'include_texture_refs': s.value("include_texture_refs", True, type=bool),
+        }
+
     def _extract(self):
         if not self.map_paths or self.running:
             return
@@ -855,7 +947,8 @@ class MainWindow(QMainWindow):
         self._log(f"\u2500\u2500 Batch extraction ({n} maps) \u2500\u2500")
 
         fmt = self._fmt_to_arg()
-        self.worker = ExtractionWorker(list(self.map_paths), fmt=fmt, output_dir=self.output_dir or None)
+        self.worker = ExtractionWorker(list(self.map_paths), fmt=fmt, output_dir=self.output_dir or None,
+                                        export_opts=self._export_opts())
         self.worker.signals.progress.connect(self._on_progress)
         self.worker.signals.map_done.connect(self._on_map_done)
         self.worker.signals.finished.connect(self._on_batch_done)
@@ -878,7 +971,10 @@ class MainWindow(QMainWindow):
                     self.eta_label.setText(f"ETA: {remaining:.0f}s")
 
     def _on_map_done(self, map_path, result: ExtractionResult):
-        self._log(f"  \u2714 {os.path.basename(map_path)}: {result.polygons} polys -> {result.output_path}")
+        msg = f"  \u2714 {os.path.basename(map_path)}: {result.polygons} polys -> {result.output_path}"
+        if result.textures_extracted:
+            msg += f", {result.textures_extracted} textures"
+        self._log(msg)
         self.results.append(result)
         self.stat_polys.set_value(sum(r.polygons for r in self.results))
 

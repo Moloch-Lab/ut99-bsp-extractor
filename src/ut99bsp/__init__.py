@@ -15,6 +15,15 @@ from ut99bsp.extractor import (
 
 from ut99bsp.exporters import write_obj_mtl, write_gltf
 
+from ut99bsp.textures import (
+    UTXReader,
+    TextureInfo,
+    decode_texture,
+    save_texture_png,
+    find_texture_packages,
+    extract_map_textures,
+)
+
 
 def main():
     """CLI entry point."""

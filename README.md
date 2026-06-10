@@ -2,7 +2,7 @@
 
 Extract and export 3D map geometry from **Unreal Tournament 1999** (UT99) `.unr` files. This tool reads BSP polygon data from classic UT99 maps — including DM-Barricade, CTF-Command, DM-Morpheus, and any other stock or custom map — and exports them to standard 3D formats usable in Blender, Maya, Unity, Unreal Engine 5, and other 3D applications.
 
-Output includes full **UV coordinates**, **vertex normals**, **per-texture material groups**, and **lightmap UVs** (as glTF `TEXCOORD_1`). Texture names are resolved from the original package's import/export tables, making it straightforward to reapply the correct source textures.
+Output includes full **UV coordinates**, **vertex normals**, **per-texture material groups**, and **lightmap UVs** (as glTF `TEXCOORD_1`). Texture names are resolved from the original package's import/export tables, making it straightforward to reapply the correct source textures. **v2.0.0+** can also extract actual texture images from `.utx` packages — decoded DXT1/3/5 compressed textures saved as PNG.
 
 A cross-platform **PySide6 GUI** provides drag-and-drop batch processing with a real-time **3D wireframe preview** (mouse-drag rotation, scroll zoom), a Catppuccin Mocha dark theme, progress ETA, and keyboard shortcuts. A CLI is also available for headless/scripted use.
 
@@ -32,7 +32,8 @@ All assets built automatically by GitHub Actions on tag push.
 - **Context menus** — Right-click queue items to remove, show in folder, quick-extract
 - **Progress ETA** — Estimated time remaining during batch extraction
 - **Stats dashboard** — Live polygon count, maps queued, last run time
-- **Texture name resolution** — Reads texture references from package import/export tables
+- **Texture extraction** — Extract .png from `.utx` texture packages (DXT1/3/5 decode)
+- **Flexible export options** — Choose to export geometry only, textures only, or both, with or without texture references
 - **Lightmap UV support** — Second UV set in glTF output (`TEXCOORD_1`)
 - **Python API** — `from ut99bsp import extract_map` for scripting
 

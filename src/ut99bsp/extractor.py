@@ -540,6 +540,12 @@ def main():
     parser.add_argument("output", nargs="?", help="Output path (default: map name + ext)")
     parser.add_argument("-f", "--format", choices=["obj", "objmtl", "gltf"], default="obj",
                         help="Output format (default: obj)")
+    parser.add_argument("--export-textures", action="store_true",
+                        help="Extract .png textures from .utx packages")
+    parser.add_argument("--no-geometry", action="store_true",
+                        help="Skip geometry export (useful with --export-textures)")
+    parser.add_argument("--no-texture-refs", action="store_true",
+                        help="Omit texture references from output")
     args = parser.parse_args()
 
     def report(msg, pct):
@@ -547,6 +553,9 @@ def main():
 
     try:
         result = extract_map(args.map, args.output, fmt=args.format,
+                              export_geometry=not args.no_geometry,
+                              export_textures=args.export_textures,
+                              include_texture_refs=not args.no_texture_refs,
                               progress_callback=report)
         print(f"\nDone! {result.polygons} polygons -> {result.output_path}")
     except Exception as e:
@@ -576,24 +585,31 @@ class ExtractionResult:
         self.triangles = []
         self.output_path = ""
         self.format = "obj"
+        self.textures_extracted = 0
 
 
-def export_map(polygons, output_path, fmt="obj"):
+def export_map(polygons, output_path, fmt="obj", include_texture_refs=True):
     """Write geometry in the requested format.  Returns output_path."""
     from ut99bsp.exporters import write_obj_mtl, write_gltf
 
     if fmt == "obj":
-        return write_obj_mtl(polygons, output_path)
+        return write_obj_mtl(polygons, output_path, include_texture_refs=include_texture_refs)
     elif fmt == "objmtl":
-        return write_obj_mtl(polygons, output_path)
+        return write_obj_mtl(polygons, output_path, include_texture_refs=include_texture_refs)
     elif fmt == "gltf":
-        return write_gltf(polygons, output_path)
+        return write_gltf(polygons, output_path, include_texture_refs=include_texture_refs)
     else:
         raise ValueError(f"Unknown format: {fmt}")
 
 
-def extract_map(map_path, output_path=None, fmt="obj", progress_callback=None):
-    """Full extraction pipeline.  fmt: 'obj', 'objmtl', 'gltf'"""
+def extract_map(map_path, output_path=None, fmt="obj", progress_callback=None,
+                export_geometry=True, export_textures=False, include_texture_refs=True):
+    """Full extraction pipeline.
+    fmt: 'obj', 'objmtl', 'gltf'
+    export_geometry: write polygon mesh
+    export_textures: extract .png from .utx packages
+    include_texture_refs: include material/texture references in output
+    """
     result = ExtractionResult()
     result.format = fmt
     result.map_name = os.path.basename(map_path)
@@ -614,7 +630,21 @@ def extract_map(map_path, output_path=None, fmt="obj", progress_callback=None):
     if not output_path:
         output_path = os.path.splitext(map_path)[0] + default_ext
 
-    report("Locating Level...", 5)
+    if export_textures:
+        tex_dir = os.path.join(os.path.dirname(output_path) or ".", "textures")
+        os.makedirs(tex_dir, exist_ok=True)
+        report("Extracting textures...", 3)
+        from ut99bsp.textures import extract_map_textures as _extract_tex
+        tex_list = _extract_tex(map_path, tex_dir, progress=report)
+        result.textures_extracted = len(tex_list)
+        report(f"Extracted {len(tex_list)} textures", 5)
+
+    if not export_geometry:
+        result.output_path = output_path
+        report("Done!", 100)
+        return result
+
+    report("Locating Level...", 10)
     level_idx = None
     for idx, exp in enumerate(pkg.exports):
         if pkg.resolve_object_name(exp['class_idx']) == "Level":
@@ -627,7 +657,7 @@ def extract_map(map_path, output_path=None, fmt="obj", progress_callback=None):
     if data is None:
         raise ValueError("Level export has no data.")
 
-    report("Parsing Level data...", 10)
+    report("Parsing Level data...", 15)
     off = skip_properties(data, 0, pkg.resolve_name)
     if off >= len(data):
         raise ValueError("Level data too short after properties.")
@@ -664,14 +694,14 @@ def extract_map(map_path, output_path=None, fmt="obj", progress_callback=None):
     model_name = pkg.resolve_name(pkg.exports[model_idx]['name_idx'])
     result.model_name = model_name
 
-    report(f"Reading Model ({model_name})...", 20)
+    report(f"Reading Model ({model_name})...", 30)
     model_data = pkg.get_export_data(model_idx)
     if model_data is None:
         raise ValueError("Model has no data.")
 
     model_off = skip_properties(model_data, 0, pkg.resolve_name)
 
-    report("Parsing BSP structures...", 30)
+    report("Parsing BSP structures...", 40)
     reader = ModelReader(model_data, model_off, pkg.version)
     model_obj = reader.read_model()
 
@@ -684,7 +714,7 @@ def extract_map(map_path, output_path=None, fmt="obj", progress_callback=None):
     if len(model_obj['nodes']) == 0:
         raise ValueError("No BSP nodes found in model.")
 
-    report("Extracting polygons...", 50)
+    report("Extracting polygons...", 60)
     polygons = extract_polygons_from_model(model_obj)
     result.polygons = len(polygons)
     result.polygons_data = polygons
@@ -694,7 +724,7 @@ def extract_map(map_path, output_path=None, fmt="obj", progress_callback=None):
         si = p['surf_index']
         if si < len(model_obj['surfaces']):
             tex_idx = model_obj['surfaces'][si]['texture']
-            p['texture_name'] = pkg.resolve_texture_name(tex_idx)
+            p['texture_name'] = pkg.resolve_texture_name(tex_idx) if include_texture_refs else None
         else:
             p['texture_name'] = None
 
@@ -707,8 +737,8 @@ def extract_map(map_path, output_path=None, fmt="obj", progress_callback=None):
     if not polygons:
         raise ValueError("No polygons extracted from model.")
 
-    report(f"Writing {fmt.upper()}...", 70)
-    export_map(polygons, output_path, fmt)
+    report(f"Writing {fmt.upper()}...", 80)
+    export_map(polygons, output_path, fmt, include_texture_refs=include_texture_refs)
     result.output_path = output_path
 
     report("Done!", 100)
@@ -723,6 +753,12 @@ def main():
     parser.add_argument("output", nargs="?", help="Output path (default: map name + ext)")
     parser.add_argument("-f", "--format", choices=["obj", "objmtl", "gltf"], default="obj",
                         help="Output format (default: obj)")
+    parser.add_argument("--export-textures", action="store_true",
+                        help="Extract .png textures from .utx packages")
+    parser.add_argument("--no-geometry", action="store_true",
+                        help="Skip geometry export (useful with --export-textures)")
+    parser.add_argument("--no-texture-refs", action="store_true",
+                        help="Omit texture references from output")
     args = parser.parse_args()
 
     def report(msg, pct):
@@ -730,6 +766,9 @@ def main():
 
     try:
         result = extract_map(args.map, args.output, fmt=args.format,
+                              export_geometry=not args.no_geometry,
+                              export_textures=args.export_textures,
+                              include_texture_refs=not args.no_texture_refs,
                               progress_callback=report)
         print(f"\nDone! {result.polygons} polygons -> {result.output_path}")
     except Exception as e:
