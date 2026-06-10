@@ -38,13 +38,6 @@ jobs:
             macOS)   mv dist/UT99-BSP-Extractor dist/UT99-BSP-Extractor-macos    ;;
           esac
 
-      - name: Package Linux zip
-        if: runner.os == 'Linux'
-        run: |
-          cd dist
-          echo "See README.txt in the project root for install instructions" > README.txt
-          zip -j UT99-BSP-Extractor-Linux.zip UT99-BSP-Extractor-linux
-
       - name: Build distro packages (Linux)
         if: runner.os == 'Linux'
         shell: bash
@@ -95,7 +88,6 @@ jobs:
             dist/UT99-BSP-Extractor-*
             dist/*.deb
             dist/*.rpm
-            dist/*.AppImage
 
   release:
     needs: build
@@ -118,6 +110,6 @@ jobs:
           gh release view "${GITHUB_REF_NAME}" &>/dev/null || \
             gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --generate-notes
           # Upload whatever artifacts exist (some may not have built)
-          for f in UT99-BSP-Extractor-* *.deb *.rpm *.AppImage; do
+          for f in UT99-BSP-Extractor-* *.deb *.rpm; do
             [ -f "$f" ] && gh release upload "${GITHUB_REF_NAME}" "$f" --clobber
           done
