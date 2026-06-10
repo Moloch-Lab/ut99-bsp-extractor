@@ -114,4 +114,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           ls -lh
-          gh release upload "${GITHUB_REF_NAME}" UT99-BSP-Extractor-* *.deb *.rpm *.AppImage --clobber
+          # Upload whatever artifacts exist (some may not have built)
+          for f in UT99-BSP-Extractor-* *.deb *.rpm *.AppImage; do
+            [ -f "$f" ] && gh release upload "${GITHUB_REF_NAME}" "$f" --clobber
+          done
