@@ -1,17 +1,24 @@
 # UT99 BSP Extractor
 
-Extracts BSP polygon geometry from Unreal Tournament 99 `.unr` map files and exports to Wavefront OBJ (with MTL) or glTF 2.0 formats, with UV coordinates and vertex normals. Cross-platform GUI with 3D wireframe preview, batch processing, and lightmap UV support.
+Extract and export 3D map geometry from **Unreal Tournament 1999** (UT99) `.unr` files. This tool reads BSP polygon data from classic UT99 maps — including DM-Barricade, CTF-Command, DM-Morpheus, and any other stock or custom map — and exports them to standard 3D formats usable in Blender, Maya, Unity, Unreal Engine 5, and other 3D applications.
+
+Output includes full **UV coordinates**, **vertex normals**, **per-texture material groups**, and **lightmap UVs** (as glTF `TEXCOORD_1`). Texture names are resolved from the original package's import/export tables, making it straightforward to reapply the correct source textures.
+
+A cross-platform **PySide6 GUI** provides drag-and-drop batch processing with a real-time **3D wireframe preview** (mouse-drag rotation, scroll zoom), a Catppuccin Mocha dark theme, progress ETA, and keyboard shortcuts. A CLI is also available for headless/scripted use.
+
+Also works with Unreal Engine 1 games built on the same engine, such as **Deus Ex**, **Rune**, and **Unreal (1998)**.
 
 ## Downloads
 
-| Platform | File | How to run |
-|----------|------|------------|
-| Linux | `UT99-BSP-Extractor-linux` | `chmod +x && ./UT99-BSP-Extractor-linux` |
-| Linux (zip) | `UT99-BSP-Extractor-Linux.zip` | Unzip, then same as above |
-| Windows | `UT99-BSP-Extractor-windows.exe` | Double-click |
-| macOS | `UT99-BSP-Extractor-macos` | `chmod +x && ./UT99-BSP-Extractor-macos` |
+| Platform | Format | File |
+|----------|--------|------|
+| Linux | standalone binary | `UT99-BSP-Extractor-linux` |
+| Linux | .deb (Debian/Ubuntu) | `ut99-bsp-extractor_1.0.0_amd64.deb` |
+| Linux | .rpm (Fedora/RHEL) | `ut99-bsp-extractor-1.0.0-1.x86_64.rpm` |
+| Windows | .exe | `UT99-BSP-Extractor-windows.exe` |
+| macOS | standalone binary | `UT99-BSP-Extractor-macos` |
 
-> Windows and macOS builds are produced automatically by GitHub Actions when a tag is pushed. See [`.github/workflows/build.yml`](.github/workflows/build.yml).
+All assets built automatically by GitHub Actions on tag push.
 
 ## Features
 
@@ -91,7 +98,7 @@ The [`installer.py`](installer.py) script builds distribution packages for your 
 
 | OS | Formats | Requirements |
 |----|---------|-------------|
-| Linux | standalone binary, `.deb`, `.rpm`, AppImage, pip | `dpkg-deb` for .deb, `rpmbuild` for .rpm (optional) |
+| Linux | standalone binary, `.deb`, `.rpm`, pip | `dpkg-deb` for .deb, `rpmbuild` for .rpm (optional) |
 | Windows | .exe (via PyInstaller on Windows), pip | Windows + PyInstaller for .exe |
 | macOS | .app (via PyInstaller on macOS), pip | macOS + PyInstaller for .app |
 
