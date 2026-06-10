@@ -9,8 +9,8 @@ import threading
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QLabel, QProgressBar, QTextEdit, QFileDialog,
-    QFrame, QMessageBox, QGroupBox, QGridLayout,
+    QPushButton, QLabel, QProgressBar, QFileDialog,
+    QFrame, QMessageBox, QGroupBox, QGridLayout, QPlainTextEdit,
 )
 from PySide6.QtCore import Qt, Signal, QObject, QTimer
 from PySide6.QtGui import QDragEnterEvent, QDropEvent, QFont
@@ -49,7 +49,7 @@ QProgressBar::chunk {
     background-color: #a6e3a1;
     border-radius: 6px;
 }
-QTextEdit {
+QPlainTextEdit {
     background-color: #181825;
     color: #cdd6f4;
     border: 1px solid #45475a;
@@ -203,7 +203,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.status_label)
 
         # Log
-        self.log = QTextEdit()
+        self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
         self.log.setMaximumBlockCount(200)
         layout.addWidget(self.log, stretch=1)
@@ -213,7 +213,7 @@ class MainWindow(QMainWindow):
     # ── helpers ─────────────────────────────────────────────────────
 
     def _log(self, msg):
-        self.log.append(msg)
+        self.log.appendPlainText(msg)
         sb = self.log.verticalScrollBar()
         sb.setValue(sb.maximum())
 
