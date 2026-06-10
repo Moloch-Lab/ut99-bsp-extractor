@@ -45,11 +45,83 @@ jobs:
           echo "See README.txt in the project root for install instructions" > README.txt
           zip -j UT99-BSP-Extractor-Linux.zip UT99-BSP-Extractor-linux
 
+      - name: Build distro packages (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -e
+          VERSION="${GITHUB_REF_NAME#v}"
+          cd dist
+
+          # .deb
+          mkdir -p deb_pkg/ut99-bsp-extractor_${VERSION}_amd64/DEBIAN
+          mkdir -p deb_pkg/ut99-bsp-extractor_${VERSION}_amd64/usr/bin
+          cp UT99-BSP-Extractor-linux deb_pkg/ut99-bsp-extractor_${VERSION}_amd64/usr/bin/ut99-bsp-extractor
+          cat > deb_pkg/ut99-bsp-extractor_${VERSION}_amd64/DEBIAN/control << DEBIAN
+Package: ut99-bsp-extractor
+Version: ${VERSION}
+Architecture: amd64
+Maintainer: Moloch Lab
+Description: Extract BSP geometry from UT99 .unr map files
+ GUI and CLI tool for exporting to OBJ/MTL and glTF formats.
+DEBIAN
+          dpkg-deb --build deb_pkg/ut99-bsp-extractor_${VERSION}_amd64
+          mv deb_pkg/ut99-bsp-extractor_${VERSION}_amd64.deb .
+
+          # .rpm
+          sudo apt-get install -y -qq rpm 2>/dev/null || true
+          mkdir -p ~/rpmbuild/{SOURCES,SPECS,BUILD}
+          cp UT99-BSP-Extractor-linux ~/rpmbuild/SOURCES/ut99-bsp-extractor
+          cat > ~/rpmbuild/SPECS/ut99-bsp-extractor.spec << RPMSPEC
+Name: ut99-bsp-extractor
+Version: ${VERSION}
+Release: 1
+Summary: UT99 BSP geometry extractor
+License: MIT
+BuildArch: x86_64
+%description
+Extract BSP geometry from Unreal Tournament 99 .unr files.
+%install
+mkdir -p %{buildroot}/usr/bin
+install -m 755 %{_sourcedir}/ut99-bsp-extractor %{buildroot}/usr/bin/
+%files
+/usr/bin/ut99-bsp-extractor
+RPMSPEC
+          rpmbuild -bb ~/rpmbuild/SPECS/ut99-bsp-extractor.spec 2>/dev/null || true
+          cp ~/rpmbuild/RPMS/x86_64/ut99-bsp-extractor-${VERSION}-1.x86_64.rpm . 2>/dev/null || true
+
+          # AppImage
+          APPDIR=UT99-BSP-Extractor.AppDir
+          mkdir -p ${APPDIR}/usr/bin
+          cp UT99-BSP-Extractor-linux ${APPDIR}/usr/bin/ut99-bsp-extractor
+          cat > ${APPDIR}/ut99-bsp-extractor.desktop << DESKTOP
+[Desktop Entry]
+Name=UT99 BSP Extractor
+Exec=ut99-bsp-extractor
+Type=Application
+Categories=Graphics;3DGraphics;
+DESKTOP
+          cat > ${APPDIR}/AppRun << 'APPRUN'
+#!/bin/bash
+HERE="$(dirname "$(readlink -f "$0")")"
+exec "$HERE/usr/bin/ut99-bsp-extractor" "$@"
+APPRUN
+          chmod +x ${APPDIR}/AppRun
+
+          curl -sSL https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage -o appimagetool
+          chmod +x appimagetool
+          ./appimagetool ${APPDIR} UT99-BSP-Extractor-x86_64.AppImage 2>/dev/null || true
+
+          ls -lh *.deb *.rpm *.AppImage 2>/dev/null || true
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: UT99-BSP-Extractor-${{ runner.os }}
-          path: dist/UT99-BSP-Extractor-*
+          path: |
+            dist/UT99-BSP-Extractor-*
+            dist/*.deb
+            dist/*.rpm
+            dist/*.AppImage
 
   release:
     needs: build
@@ -68,4 +140,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           ls -lh
-          gh release upload "${GITHUB_REF_NAME}" UT99-BSP-Extractor-* --clobber
+          gh release upload "${GITHUB_REF_NAME}" UT99-BSP-Extractor-* *.deb *.rpm *.AppImage --clobber

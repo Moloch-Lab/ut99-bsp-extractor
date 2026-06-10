@@ -27,6 +27,15 @@ VENV_DIR = os.path.join(THIS_DIR, "venv")
 VENV_BIN = os.path.join(VENV_DIR, "bin", "python3")
 VENV_PIP = os.path.join(VENV_DIR, "bin", "pip")
 
+# Read version from pyproject.toml
+try:
+    import tomllib
+except ImportError:
+    import tomli as tomllib
+
+with open(os.path.join(THIS_DIR, "pyproject.toml"), "rb") as _f:
+    VERSION = tomllib.load(_f)["project"]["version"]
+
 # Re-exec with venv Python if available and not already using it
 if os.path.isdir(VENV_DIR) and sys.executable != VENV_BIN:
     os.execv(VENV_BIN, [VENV_BIN] + sys.argv)
@@ -120,17 +129,17 @@ def _build_deb(binary_path):
         return None
     _log("Building .deb package...")
     pkg_dir = os.path.join(DIST_DIR, "deb_pkg")
-    deb_root = os.path.join(pkg_dir, "ut99-bsp-extractor_0.2.0_amd64")
+    deb_root = os.path.join(pkg_dir, f"ut99-bsp-extractor_{VERSION}_amd64")
     usr_bin = os.path.join(deb_root, "usr", "bin")
     os.makedirs(usr_bin, exist_ok=True)
     shutil.copy2(binary_path, os.path.join(usr_bin, "ut99-bsp-extractor"))
 
-    deb_out = os.path.join(DIST_DIR, "ut99-bsp-extractor_0.2.0_amd64.deb")
+    deb_out = os.path.join(DIST_DIR, f"ut99-bsp-extractor_{VERSION}_amd64.deb")
     os.makedirs(os.path.join(deb_root, "DEBIAN"), exist_ok=True)
     with open(os.path.join(deb_root, "DEBIAN", "control"), "w") as f:
         f.write(
             "Package: ut99-bsp-extractor\n"
-            "Version: 0.2.0\n"
+            f"Version: {VERSION}\n"
             "Architecture: amd64\n"
             "Maintainer: Moloch Lab\n"
             "Description: Extract BSP geometry from UT99 .unr map files\n"
@@ -162,7 +171,7 @@ def _build_rpm(binary_path):
     with open(spec, "w") as f:
         f.write(
             "Name: ut99-bsp-extractor\n"
-            "Version: 0.2.0\n"
+            f"Version: {VERSION}\n"
             "Release: 1\n"
             "Summary: UT99 BSP geometry extractor\n"
             "License: MIT\n"
@@ -177,7 +186,7 @@ def _build_rpm(binary_path):
         )
     _run(["rpmbuild", "-bb", spec], check=False)
     rpm_out = os.path.join(home, "rpmbuild", "RPMS", "x86_64",
-                           f"ut99-bsp-extractor-0.2.0-1.x86_64.rpm")
+                           f"ut99-bsp-extractor-{VERSION}-1.x86_64.rpm")
     if os.path.exists(rpm_out):
         dest = os.path.join(DIST_DIR, os.path.basename(rpm_out))
         shutil.copy2(rpm_out, dest)
