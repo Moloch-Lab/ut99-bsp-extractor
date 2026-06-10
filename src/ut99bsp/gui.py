@@ -173,10 +173,11 @@ class WorkerSignals(QObject):
 
 
 class ExtractionWorker(threading.Thread):
-    def __init__(self, map_paths, fmt="obj"):
+    def __init__(self, map_paths, fmt="obj", output_dir=None):
         super().__init__()
         self.map_paths = map_paths
         self.fmt = fmt
+        self.output_dir = output_dir
         self.signals = WorkerSignals()
         self.start_time = 0
 
@@ -187,7 +188,7 @@ class ExtractionWorker(threading.Thread):
             base_name = os.path.splitext(os.path.basename(mp))[0]
             self.signals.progress.emit(f"[{idx+1}/{total}] {base_name}", 0)
             try:
-                out_dir = os.path.join(os.path.dirname(mp), "bsp_export")
+                out_dir = self.output_dir or os.path.join(os.path.dirname(mp), "bsp_export")
                 os.makedirs(out_dir, exist_ok=True)
                 ext = ".obj" if self.fmt in ("obj", "objmtl") else ".gltf"
                 out_path = os.path.join(out_dir, base_name + ext)
@@ -436,6 +437,7 @@ class MainWindow(QMainWindow):
         self.running = False
         self.results = []
         self.extract_start_time = 0
+        self.output_dir = ""
 
         self._setup_ui()
         self._setup_shortcuts()
@@ -459,6 +461,7 @@ class MainWindow(QMainWindow):
         root.addWidget(self._build_stats_row())
         root.addWidget(self._build_queue_section())
         root.addWidget(self._build_controls())
+        root.addWidget(self._build_output_dir_row())
         root.addWidget(self._build_progress_section())
         root.addWidget(self._build_log(), stretch=1)
 
@@ -563,6 +566,38 @@ class MainWindow(QMainWindow):
         row.addWidget(self.extract_btn)
         return w
 
+    def _build_output_dir_row(self):
+        w = QWidget()
+        row = QHBoxLayout(w)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(8)
+        lbl = QLabel("Output:")
+        lbl.setStyleSheet("color: #6c7086; font-size: 12px; font-weight: bold;")
+        row.addWidget(lbl)
+        self.output_dir_lbl = QLabel("Same as map files (bsp_export/)")
+        self.output_dir_lbl.setStyleSheet("color: #a6adc8; font-size: 12px;")
+        self.output_dir_lbl.setWordWrap(True)
+        row.addWidget(self.output_dir_lbl, stretch=1)
+        self.output_btn = QPushButton("Browse...")
+        self.output_btn.setFixedHeight(26)
+        self.output_btn.setStyleSheet(
+            "QPushButton { background-color: #313244; color: #cdd6f4; "
+            "padding: 4px 14px; font-size: 11px; border-radius: 4px; }"
+            "QPushButton:hover { background-color: #45475a; }"
+        )
+        self.output_btn.clicked.connect(self._browse_output_dir)
+        row.addWidget(self.output_btn)
+        self.output_reset_btn = QPushButton("Reset")
+        self.output_reset_btn.setFixedHeight(26)
+        self.output_reset_btn.setStyleSheet(
+            "QPushButton { background-color: #313244; color: #cdd6f4; "
+            "padding: 4px 14px; font-size: 11px; border-radius: 4px; }"
+            "QPushButton:hover { background-color: #45475a; }"
+        )
+        self.output_reset_btn.clicked.connect(self._reset_output_dir)
+        row.addWidget(self.output_reset_btn)
+        return w
+
     def _build_progress_section(self):
         w = QWidget()
         l = QVBoxLayout(w)
@@ -614,9 +649,16 @@ class MainWindow(QMainWindow):
         if 0 <= fmt <= 2:
             self.fmt_combo.setCurrentIndex(fmt)
 
+        out_dir = self.settings.value("output_dir", "")
+        if out_dir and os.path.isdir(out_dir):
+            self.output_dir = out_dir
+            self._update_output_label()
+
     def _save_settings(self):
         self.settings.setValue("window_geometry", self.saveGeometry())
         self.settings.setValue("format", self.fmt_combo.currentIndex())
+        if self.output_dir:
+            self.settings.setValue("output_dir", self.output_dir)
 
     def closeEvent(self, event):
         self._save_settings()
@@ -718,7 +760,7 @@ class MainWindow(QMainWindow):
         self.progress.setValue(0)
         self.status_label.setText(f"Extracting {os.path.basename(path)}...")
 
-        worker = ExtractionWorker([path], fmt=self._fmt_to_arg())
+        worker = ExtractionWorker([path], fmt=self._fmt_to_arg(), output_dir=self.output_dir or None)
         worker.signals.map_done.connect(lambda p, r: (
             self._log(f"  \u2714 {os.path.basename(p)}: {r.polygons} polys"),
             self.results.append(r),
@@ -766,6 +808,24 @@ class MainWindow(QMainWindow):
             self.settings.setValue("last_dir", os.path.dirname(paths[0]))
             self._add_paths(paths)
 
+    def _browse_output_dir(self):
+        last_dir = self.output_dir or self.settings.value("output_dir", "")
+        d = QFileDialog.getExistingDirectory(self, "Select Output Directory", last_dir)
+        if d:
+            self.output_dir = d
+            self.settings.setValue("output_dir", d)
+            self._update_output_label()
+
+    def _reset_output_dir(self):
+        self.output_dir = ""
+        self._update_output_label()
+
+    def _update_output_label(self):
+        if self.output_dir:
+            self.output_dir_lbl.setText(self.output_dir)
+        else:
+            self.output_dir_lbl.setText("Same as map files (bsp_export/)")
+
     def _clear_queue(self):
         self.map_paths.clear()
         self.queue_list.clear()
@@ -795,7 +855,7 @@ class MainWindow(QMainWindow):
         self._log(f"\u2500\u2500 Batch extraction ({n} maps) \u2500\u2500")
 
         fmt = self._fmt_to_arg()
-        self.worker = ExtractionWorker(list(self.map_paths), fmt=fmt)
+        self.worker = ExtractionWorker(list(self.map_paths), fmt=fmt, output_dir=self.output_dir or None)
         self.worker.signals.progress.connect(self._on_progress)
         self.worker.signals.map_done.connect(self._on_map_done)
         self.worker.signals.finished.connect(self._on_batch_done)
