@@ -30,6 +30,7 @@ jobs:
           pyinstaller --onefile --windowed --name "UT99-BSP-Extractor" --add-data "src/ut99bsp:ut99bsp" ut99_bsp_gui.py
 
       - name: Rename binary per platform
+        shell: bash
         run: |
           case "${{ runner.os }}" in
             Linux)   mv dist/UT99-BSP-Extractor dist/UT99-BSP-Extractor-linux    ;;
