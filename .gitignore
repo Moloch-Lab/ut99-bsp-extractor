@@ -9,3 +9,5 @@ build/
 dist/
 *.bin
 *.gltf
+*.egg-info/
+src/*.egg-info/

@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ut99bsp"
+version = "0.2.0"
+description = "Extract BSP geometry from Unreal Tournament 99 .unr files"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.8"
+dependencies = []
+
+[project.scripts]
+ut99-bsp-extractor = "ut99bsp:main"
+ut99-bsp-gui = "ut99bsp.gui:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+ut99bsp = ["py.typed"]

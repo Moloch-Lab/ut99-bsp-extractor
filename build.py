@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-import subprocess, sys, os, shutil
+"""Build a standalone executable with PyInstaller."""
+import subprocess, sys, os
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 DIST_DIR = os.path.join(THIS_DIR, "dist")
@@ -15,7 +16,7 @@ cmd = [
     "--windowed",
     "--name", "UT99-BSP-Extractor",
     "--distpath", DIST_DIR,
-    "--add-data", f"exporters.py{os.pathsep}.",
+    "--add-data", f"src/ut99bsp{os.pathsep}ut99bsp",
     os.path.join(THIS_DIR, "ut99_bsp_gui.py"),
 ]
 
