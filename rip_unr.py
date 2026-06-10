@@ -12,6 +12,7 @@ import struct
 import os
 import sys
 import math
+import json
 
 MAGIC = 0x9E2A83C1
 
@@ -392,6 +393,7 @@ def export_obj(polygons, output_path):
                     nx, ny, nz = 0.0, 0.0, 1.0
                 lines.append(f"vn {nx:.6f} {ny:.6f} {nz:.6f}")
                 ni += 1
+            vert_map[key] = (unique_verts[pos], unique_uvs[uv], unique_normals[nrm])
 
     lines.append("")
 
@@ -626,6 +628,129 @@ def main():
     else:
         print("  No polygons extracted.", file=sys.stderr)
         return 1
+
+
+# ── Library API ────────────────────────────────────────────────────────
+
+class ExtractionResult:
+    def __init__(self):
+        self.map_name = ""
+        self.version = 0
+        self.names_count = 0
+        self.exports_count = 0
+        self.imports_count = 0
+        self.model_name = ""
+        self.vectors = 0
+        self.points = 0
+        self.nodes = 0
+        self.surfaces = 0
+        self.verts = 0
+        self.polygons = 0
+        self.output_path = ""
+
+
+def extract_map(map_path, output_path=None, progress_callback=None):
+    """Full extraction pipeline.  Calls progress_callback(msg, pct) if given."""
+    result = ExtractionResult()
+    result.map_name = os.path.basename(map_path)
+
+    def report(msg, pct=None):
+        if progress_callback:
+            progress_callback(msg, pct)
+
+    report("Reading package...", 0)
+    pkg = PackageReader(map_path)
+    result.version = pkg.version
+    result.names_count = pkg.name_count
+    result.exports_count = pkg.export_count
+    result.imports_count = pkg.import_count
+
+    if not output_path:
+        output_path = os.path.splitext(map_path)[0] + ".obj"
+
+    report("Locating Level...", 5)
+    level_idx = None
+    for idx, exp in enumerate(pkg.exports):
+        if pkg.resolve_object_name(exp['class_idx']) == "Level":
+            level_idx = idx
+            break
+    if level_idx is None:
+        raise ValueError("No Level export found in package.")
+
+    data = pkg.get_export_data(level_idx)
+    if data is None:
+        raise ValueError("Level export has no data.")
+
+    report("Parsing Level data...", 10)
+    off = skip_properties(data, 0, pkg.resolve_name)
+    if off >= len(data):
+        raise ValueError("Level data too short after properties.")
+
+    actors_count = struct.unpack('<I', data[off:off+4])[0]
+    off += 8
+    for _ in range(actors_count):
+        v, off = read_compact_index(data, off)
+
+    def skip_sized_text(d, o):
+        if o >= len(d):
+            return o, ""
+        sz = d[o]
+        text = d[o+1:o+1+sz].decode('windows-1252', errors='replace').rstrip('\0')
+        return o + 1 + sz, text
+
+    off, _ = skip_sized_text(data, off)
+    off, _ = skip_sized_text(data, off)
+    off, _ = skip_sized_text(data, off)
+    opt_count, off = read_compact_index(data, off)
+    for _ in range(opt_count):
+        off, _ = skip_sized_text(data, off)
+    off, _ = skip_sized_text(data, off)
+    off += 8
+
+    model_ref, _ = read_compact_index(data, off)
+    if model_ref <= 0:
+        raise ValueError("Level has no Model reference.")
+
+    model_idx = model_ref - 1
+    if model_idx >= len(pkg.exports):
+        raise ValueError(f"Model reference {model_ref} out of range.")
+
+    model_name = pkg.resolve_name(pkg.exports[model_idx]['name_idx'])
+    result.model_name = model_name
+
+    report(f"Reading Model ({model_name})...", 20)
+    model_data = pkg.get_export_data(model_idx)
+    if model_data is None:
+        raise ValueError("Model has no data.")
+
+    model_off = skip_properties(model_data, 0, pkg.resolve_name)
+
+    report("Parsing BSP structures...", 30)
+    reader = ModelReader(model_data, model_off, pkg.version)
+    model_obj = reader.read_model()
+
+    result.vectors = len(model_obj['vectors'])
+    result.points = len(model_obj['points'])
+    result.nodes = len(model_obj['nodes'])
+    result.surfaces = len(model_obj['surfaces'])
+    result.verts = len(model_obj['verts'])
+
+    if len(model_obj['nodes']) == 0:
+        raise ValueError("No BSP nodes found in model.")
+
+    report("Extracting polygons...", 50)
+    polygons = extract_polygons_from_model(model_obj)
+    result.polygons = len(polygons)
+
+    if not polygons:
+        raise ValueError("No polygons extracted from model.")
+
+    report("Writing OBJ...", 70)
+    export_obj(polygons, output_path)
+    result.output_path = output_path
+
+    report("Done!", 100)
+    return result
 
 
 if __name__ == '__main__':
