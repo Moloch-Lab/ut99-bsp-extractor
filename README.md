@@ -8,7 +8,7 @@ Extracts BSP polygon geometry from Unreal Tournament 99 `.unr` map files and exp
 
 Grab the standalone executable from the [releases page](https://github.com/Moloch-Lab/ut99-bsp-extractor/releases) (Linux, 86 MB).
 
-### Install from source
+### Install from source with one command
 
 ```sh
 git clone https://github.com/Moloch-Lab/ut99-bsp-extractor.git
@@ -17,12 +17,12 @@ cd ut99-bsp-extractor
 ./run.sh                  # launch GUI
 ```
 
-Or install manually:
+Or use the interactive installer to build a package for your OS:
 
 ```sh
-python3 -m venv venv
-venv/bin/pip install .    # installs the ut99bsp package + CLI entry points
-venv/bin/pip install PySide6  # GUI only
+./venv/bin/python3 installer.py            # interactive CLI menu
+./venv/bin/python3 installer.py --gui       # GUI installer
+./venv/bin/python3 installer.py --os linux --format appimage  # non-interactive
 ```
 
 ## Usage
@@ -52,16 +52,6 @@ Formats:
 
 Output defaults to `<mapname>.obj` in the current directory.
 
-### Batch
-
-The GUI processes all dropped maps sequentially. For CLI batch:
-
-```sh
-for f in Maps/*.unr; do
-    ut99-bsp-extractor "$f" -f gltf
-done
-```
-
 ### Python API
 
 ```python
@@ -70,6 +60,24 @@ from ut99bsp import extract_map
 result = extract_map("DM-MyLevel.unr", "output.obj", fmt="objmtl")
 print(f"{result.polygons} polygons written to {result.output_path}")
 # result.triangles -> list of 3-tuples for preview
+```
+
+## Installer
+
+The [`installer.py`](installer.py) script builds distribution packages for your target OS:
+
+| OS | Formats | Requirements |
+|----|---------|-------------|
+| Linux | standalone binary, `.deb`, `.rpm`, AppImage, pip | `dpkg-deb` for .deb, `rpmbuild` for .rpm (optional) |
+| Windows | .exe (via PyInstaller on Windows), pip | Windows + PyInstaller for .exe |
+| macOS | .app (via PyInstaller on macOS), pip | macOS + PyInstaller for .app |
+
+Run the installer interactively:
+
+```sh
+./venv/bin/python3 installer.py          # CLI menu
+./venv/bin/python3 installer.py --gui    # GUI (requires PySide6)
+./venv/bin/python3 installer.py --os linux --format binary  # headless
 ```
 
 ## Project structure
@@ -83,8 +91,9 @@ ut99-bsp-extractor/
 │   └── gui.py            # PySide6 GUI
 ├── rip_unr.py            # CLI script (imports from ut99bsp)
 ├── ut99_bsp_gui.py       # GUI script (imports from ut99bsp)
+├── installer.py          # cross-platform installer / packager
 ├── pyproject.toml        # build config
-├── install.sh            # one-step install script
+├── install.sh            # one-step venv setup
 ├── run.sh                # GUI launcher
 ├── build.py              # PyInstaller packaging
 └── requirements.txt      # PySide6 dependency
@@ -107,12 +116,6 @@ ut99-bsp-extractor/
 | `Nodes` | `TArray<FBspNode>` | BSP tree nodes with polygon references |
 | `Surfaces` | `TArray<FBspSurface>` | Surface properties (texture, UV axes) |
 | `Verts` | `TArray<FVert>` | Vertex-to-point mappings |
-
-## Build standalone executable
-
-```sh
-python build.py    # requires PyInstaller; output in dist/
-```
 
 ## Requirements
 
