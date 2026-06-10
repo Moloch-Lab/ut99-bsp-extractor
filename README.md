@@ -6,7 +6,15 @@ Extracts BSP polygon geometry from Unreal Tournament 99 `.unr` map files and exp
 
 ### Download (no Python required)
 
-Grab the standalone executable from the [releases page](https://github.com/Moloch-Lab/ut99-bsp-extractor/releases) (Linux, 86 MB).
+Grab the standalone executable for your platform from the [releases page](https://github.com/Moloch-Lab/ut99-bsp-extractor/releases):
+
+| Platform | File |
+|----------|------|
+| Linux | `UT99-BSP-Extractor-linux` |
+| Windows | `UT99-BSP-Extractor-windows.exe` |
+| macOS | `UT99-BSP-Extractor-macos` |
+
+Windows and macOS builds are produced automatically by [GitHub Actions](.github/workflows/build.yml) when a tag is pushed. Maintainers push a tag and the workflow builds on all three OS runners, then uploads the artifacts to the release.
 
 ### Install from source with one command
 

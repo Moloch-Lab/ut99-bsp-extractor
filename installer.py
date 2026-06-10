@@ -259,13 +259,21 @@ LINUX_FORMATS = {
 }
 
 WINDOWS_FORMATS = {
-    "exe": ("Windows .exe (PyInstaller)", lambda: _log("Run on Windows: python build.py")),
+    "exe": ("Windows .exe", lambda: _log(
+        "Build on Windows natively:\n"
+        "  pyinstaller --onefile --windowed --name UT99-BSP-Extractor "
+        "--add-data \"src/ut99bsp;ut99bsp\" ut99_bsp_gui.py\n\n"
+        "Or push a tag to trigger GitHub Actions which builds all platforms.")),
     "pip": ("pip install into venv", _pip_install),
     "source": ("Download source zip", lambda: _log("Download from github.com/Moloch-Lab/ut99-bsp-extractor")),
 }
 
 MACOS_FORMATS = {
-    "app": ("macOS .app bundle (PyInstaller)", lambda: _log("Run on macOS: python build.py")),
+    "app": ("macOS .app bundle", lambda: _log(
+        "Build on macOS natively:\n"
+        "  pyinstaller --onefile --windowed --name UT99-BSP-Extractor "
+        "--add-data \"src/ut99bsp:ut99bsp\" ut99_bsp_gui.py\n\n"
+        "Or push a tag to trigger GitHub Actions which builds all platforms.")),
     "pip": ("pip install into venv", _pip_install),
     "source": ("Download source zip", lambda: _log("Download from github.com/Moloch-Lab/ut99-bsp-extractor")),
 }

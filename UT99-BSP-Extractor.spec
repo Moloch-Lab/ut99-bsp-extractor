@@ -2,10 +2,10 @@
 
 
 a = Analysis(
-    ['ut99_bsp_gui.py'],
+    ['/home/ben/Downloads/ut99-bsp-extractor/ut99_bsp_gui.py'],
     pathex=[],
     binaries=[],
-    datas=[('exporters.py', '.')],
+    datas=[('src/ut99bsp', 'ut99bsp')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

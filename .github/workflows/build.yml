@@ -1,0 +1,61 @@
+name: Build
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller -r requirements.txt
+
+      - name: Build with PyInstaller
+        run: |
+          pip install -e .
+          pyinstaller --onefile --windowed --name "UT99-BSP-Extractor" --add-data "src/ut99bsp:ut99bsp" ut99_bsp_gui.py
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: UT99-BSP-Extractor-${{ runner.os }}
+          path: dist/UT99-BSP-Extractor*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: UT99-BSP-Extractor-*
+          merge-multiple: true
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          shopt -s nullglob
+          for f in UT99-BSP-Extractor*; do
+            case "$f" in
+              *Linux*)   mv "$f" "UT99-BSP-Extractor-linux"    ;;
+              *Windows*) mv "$f" "UT99-BSP-Extractor-windows.exe" ;;
+              *macOS*)   mv "$f" "UT99-BSP-Extractor-macos"    ;;
+            esac
+          done
+          gh release upload "${GITHUB_REF_NAME}" UT99-BSP-Extractor-* --clobber
