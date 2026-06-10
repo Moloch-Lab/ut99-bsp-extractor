@@ -114,6 +114,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           ls -lh
+          # Create release if it doesn't exist yet
+          gh release view "${GITHUB_REF_NAME}" &>/dev/null || \
+            gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --generate-notes
           # Upload whatever artifacts exist (some may not have built)
           for f in UT99-BSP-Extractor-* *.deb *.rpm *.AppImage; do
             [ -f "$f" ] && gh release upload "${GITHUB_REF_NAME}" "$f" --clobber
