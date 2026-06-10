@@ -633,11 +633,14 @@ def extract_map(map_path, output_path=None, fmt="obj", progress_callback=None,
     if export_textures:
         tex_dir = os.path.join(os.path.dirname(output_path) or ".", "textures")
         os.makedirs(tex_dir, exist_ok=True)
-        report("Extracting textures...", 3)
+        report(f"Extracting textures to {tex_dir}...", 3)
         from ut99bsp.textures import extract_map_textures as _extract_tex
         tex_list = _extract_tex(map_path, tex_dir, progress=report)
         result.textures_extracted = len(tex_list)
-        report(f"Extracted {len(tex_list)} textures", 5)
+        if tex_list:
+            report(f"Saved {len(tex_list)} textures to {tex_dir}", 5)
+        else:
+            report("No textures found", 5)
 
     if not export_geometry:
         result.output_path = output_path

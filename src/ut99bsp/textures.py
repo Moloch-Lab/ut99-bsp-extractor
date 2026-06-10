@@ -241,11 +241,14 @@ class UTXReader:
         self._find_textures()
 
     def _read_header(self):
+        if len(self.data) < 36:
+            raise ValueError("File too small for package header")
         fields = struct.unpack('<IIHHIIIIII', self.data[:36])
-        magic, self.version, lic_mode, self.flags = fields[0], fields[1], fields[2], fields[3]
+        magic, self.version = fields[0], fields[1]
         self.name_count, self.name_offset = fields[4], fields[5]
         self.export_count, self.export_offset = fields[6], fields[7]
         self.import_count, self.import_offset = fields[8], fields[9]
+        self.flags = fields[3]
         if magic != MAGIC:
             raise ValueError(f"Not a UT99 package: magic={magic:#010x}")
 
@@ -253,43 +256,68 @@ class UTXReader:
         self.names = []
         off = self.name_offset
         for _ in range(self.name_count):
-            length, off = _read_compact_index(self.data, off)
-            name = self.data[off:off+length].decode('windows-1252', errors='replace').rstrip('\0')
-            off += length
-            flags = struct.unpack('<I', self.data[off:off+4])[0]
-            off += 4
-            self.names.append(name)
+            if off >= len(self.data):
+                break
+            try:
+                length, off = _read_compact_index(self.data, off)
+                if off + length > len(self.data):
+                    break
+                name = self.data[off:off+length].decode('windows-1252', errors='replace').rstrip('\0')
+                off += length
+                if off + 4 > len(self.data):
+                    break
+                flags = struct.unpack('<I', self.data[off:off+4])[0]
+                off += 4
+                self.names.append(name)
+            except (struct.error, ValueError):
+                break
 
     def _read_imports(self):
         self.imports = []
         off = self.import_offset
         for _ in range(self.import_count):
-            cp, off = _read_compact_index(self.data, off)
-            cn, off = _read_compact_index(self.data, off)
-            pi = struct.unpack('<I', self.data[off:off+4])[0]
-            off += 4
-            on, off = _read_compact_index(self.data, off)
-            self.imports.append({'class_package': cp, 'class_name': cn,
-                                  'package_index': pi, 'name_index': on})
+            if off >= len(self.data):
+                break
+            try:
+                cp, off = _read_compact_index(self.data, off)
+                cn, off = _read_compact_index(self.data, off)
+                if off + 4 > len(self.data):
+                    break
+                pi = struct.unpack('<I', self.data[off:off+4])[0]
+                off += 4
+                on, off = _read_compact_index(self.data, off)
+                self.imports.append({'class_package': cp, 'class_name': cn,
+                                      'package_index': pi, 'name_index': on})
+            except (struct.error, ValueError, IndexError):
+                break
 
     def _read_exports(self):
         self.exports = []
         off = self.export_offset
         for _ in range(self.export_count):
-            ci, off = _read_compact_index(self.data, off)
-            si, off = _read_compact_index(self.data, off)
-            pi = struct.unpack('<I', self.data[off:off+4])[0]
-            off += 4
-            ni, off = _read_compact_index(self.data, off)
-            of = struct.unpack('<I', self.data[off:off+4])[0]
-            off += 4
-            ss, off = _read_compact_index(self.data, off)
-            so, off = _read_compact_index(self.data, off)
-            self.exports.append({
-                'class_idx': ci, 'super_idx': si, 'pkg_idx': pi,
-                'name_idx': ni, 'flags': of, 'serial_size': ss,
-                'serial_offset': so,
-            })
+            if off >= len(self.data):
+                break
+            try:
+                ci, off = _read_compact_index(self.data, off)
+                si, off = _read_compact_index(self.data, off)
+                if off + 4 > len(self.data):
+                    break
+                pi = struct.unpack('<I', self.data[off:off+4])[0]
+                off += 4
+                ni, off = _read_compact_index(self.data, off)
+                if off + 4 > len(self.data):
+                    break
+                of = struct.unpack('<I', self.data[off:off+4])[0]
+                off += 4
+                ss, off = _read_compact_index(self.data, off)
+                so, off = _read_compact_index(self.data, off)
+                self.exports.append({
+                    'class_idx': ci, 'super_idx': si, 'pkg_idx': pi,
+                    'name_idx': ni, 'flags': of, 'serial_size': ss,
+                    'serial_offset': so,
+                })
+            except (struct.error, ValueError, IndexError):
+                break
 
     def resolve_name(self, idx):
         return _resolve_name(self.data, self.names, idx)
@@ -297,14 +325,17 @@ class UTXReader:
     def resolve_object_name(self, idx):
         if idx == 0:
             return "None"
-        if idx > 0:
-            e = idx - 1
-            if e < len(self.exports):
-                return self.resolve_name(self.exports[e]['name_idx'])
-        if idx < 0:
-            i = -idx - 1
-            if i < len(self.imports):
-                return self.resolve_name(self.imports[i]['name_index'])
+        try:
+            if idx > 0:
+                e = idx - 1
+                if e < len(self.exports):
+                    return self.resolve_name(self.exports[e]['name_idx'])
+            if idx < 0:
+                i = -idx - 1
+                if i < len(self.imports):
+                    return self.resolve_name(self.imports[i]['name_index'])
+        except IndexError:
+            pass
         return f"Obj_{idx}"
 
     def get_export_data(self, idx):
@@ -313,16 +344,25 @@ class UTXReader:
         e = self.exports[idx]
         if e['serial_size'] == 0 or e['serial_offset'] < 0:
             return None
-        return self.data[e['serial_offset']:e['serial_offset'] + e['serial_size']]
+        end = e['serial_offset'] + e['serial_size']
+        if end > len(self.data):
+            return None
+        return self.data[e['serial_offset']:end]
 
     def _find_textures(self):
         for idx, exp in enumerate(self.exports):
-            class_name = self.resolve_object_name(exp['class_idx'])
+            try:
+                class_name = self.resolve_object_name(exp['class_idx'])
+            except (IndexError, KeyError):
+                continue
             if class_name in ("Mipmap", "Texture", "FireTexture", "Subs"):
                 data = self.get_export_data(idx)
                 if data is None or len(data) < 16:
                     continue
-                name = self.resolve_name(exp['name_idx'])
+                try:
+                    name = self.resolve_name(exp['name_idx'])
+                except IndexError:
+                    continue
                 tex = TextureInfo()
                 tex.name = name
                 tex.export_idx = idx
@@ -425,9 +465,12 @@ def find_texture_packages(map_path, search_paths=None):
         return {}
     tex_packages = set()
     for imp in pkg.imports:
-        pkg_name = pkg.resolve_name(imp['class_package'])
-        if pkg_name:
-            tex_packages.add(pkg_name)
+        # Root-level imports (package_index == 0) are the packages this .unr depends on
+        if imp['package_index'] != 0:
+            continue
+        name = pkg.resolve_name(imp['name_index'])
+        if name:
+            tex_packages.add(name)
     found = {}
     for pkg_name in tex_packages:
         utx_name = f"{pkg_name}.utx"
