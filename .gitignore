@@ -5,3 +5,7 @@ __pycache__/
 .idea/
 *.unr
 venv/
+build/
+dist/
+*.bin
+*.gltf

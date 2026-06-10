@@ -12,7 +12,6 @@ import struct
 import os
 import sys
 import math
-import json
 
 MAGIC = 0x9E2A83C1
 
@@ -339,9 +338,12 @@ def extract_polygons_from_model(model):
             vert_uvs.append((u, v))
 
         if len(vert_positions) >= 3:
+            # Lightmap UVs use the same tangent-space projection
+            uv2 = [(u, v) for u, v in vert_uvs]
             polygons.append({
                 'vertices': vert_positions,
                 'uvs': vert_uvs,
+                'uv2': uv2,
                 'normal': normal,
                 'node_index': ni,
                 'surf_index': node['i_surf'],
@@ -506,6 +508,22 @@ class PackageReader:
                 return self.resolve_name(self.imports[i]['name_index'])
         return f"Obj_{idx}"
 
+    def resolve_texture_name(self, idx):
+        if idx == 0:
+            return None
+        if idx > 0:
+            e = idx - 1
+            if e < len(self.exports):
+                return self.resolve_name(self.exports[e]['name_idx'])
+        if idx < 0:
+            ci = -idx - 1
+            if ci < len(self.imports):
+                imp = self.imports[ci]
+                cp = self.resolve_name(imp['class_package'])
+                cn = self.resolve_name(imp['class_name'])
+                return f"{cp}.{cn}"
+        return None
+
     def get_export_data(self, idx):
         if idx < 0 or idx >= len(self.exports):
             return None
@@ -515,119 +533,27 @@ class PackageReader:
         return self.data[e['serial_offset']:e['serial_offset'] + e['serial_size']]
 
 
-# ── Main ──────────────────────────────────────────────────────────────
-
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: rip_unr.py <map.unr> [output.obj]")
+    import argparse
+    parser = argparse.ArgumentParser(description="Extract BSP geometry from UT99 .unr files")
+    parser.add_argument("map", help="Path to .unr map file")
+    parser.add_argument("output", nargs="?", help="Output path (default: map name + ext)")
+    parser.add_argument("-f", "--format", choices=["obj", "objmtl", "gltf"], default="obj",
+                        help="Output format (default: obj)")
+    args = parser.parse_args()
+
+    def report(msg, pct):
+        print(f"  [{pct}%] {msg}")
+
+    try:
+        result = extract_map(args.map, args.output, fmt=args.format,
+                              progress_callback=report)
+        print(f"\nDone! {result.polygons} polygons -> {result.output_path}")
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
         return 1
+    return 0
 
-    map_path = sys.argv[1]
-    if not os.path.exists(map_path):
-        print(f"Error: file not found: {map_path}", file=sys.stderr)
-        return 1
-
-    output_path = sys.argv[2] if len(sys.argv) > 2 else \
-        os.path.splitext(os.path.basename(map_path))[0] + ".obj"
-
-    print(f"Opening {map_path}...")
-    pkg = PackageReader(map_path)
-    print(f"  Package version: {pkg.version}")
-    print(f"  Names: {pkg.name_count}, Imports: {pkg.import_count}, Exports: {pkg.export_count}")
-
-    # Find the Level export (class = "Level", name = "MyLevel")
-    level_idx = None
-    for idx, exp in enumerate(pkg.exports):
-        if pkg.resolve_object_name(exp['class_idx']) == "Level":
-            level_idx = idx
-            print(f"  Found Level export [{idx}]: {pkg.resolve_name(exp['name_idx'])} "
-                  f"size={exp['serial_size']}")
-            break
-
-    if level_idx is None:
-        print("  No Level export found.", file=sys.stderr)
-        return 1
-
-    # Read the Level's data section (after properties) to find the Model reference
-    data = pkg.get_export_data(level_idx)
-    if data is None:
-        print("  Level has no data.", file=sys.stderr)
-        return 1
-
-    off = skip_properties(data, 0, pkg.resolve_name)
-    if off >= len(data):
-        print("  Level data too short after properties.", file=sys.stderr)
-        return 1
-
-    # Parse ULevelBase: uint32 actors_count, then +4 skip, then CompactIndex array of actors
-    actors_count = struct.unpack('<I', data[off:off+4])[0]
-    off += 8  # count + skip 4 bytes
-
-    for _ in range(actors_count):
-        v, off = read_compact_index(data, off)
-
-    # Skip LevelURL (protocol, host, map, options[], portal, port, valid)
-    def skip_sized_text(d, o):
-        if o >= len(d):
-            return o
-        sz = d[o]
-        o += 1 + sz
-        return o
-
-    off = skip_sized_text(data, off)  # protocol
-    off = skip_sized_text(data, off)  # host
-    off = skip_sized_text(data, off)  # map
-    opt_count, off = read_compact_index(data, off)  # options array
-    for _ in range(opt_count):
-        off = skip_sized_text(data, off)
-    off = skip_sized_text(data, off)  # portal
-    off += 4  # port (uint32)
-    off += 4  # valid (uint32)
-
-    # Now read ULevel: Model reference (CompactIndex)
-    model_ref, _ = read_compact_index(data, off)
-
-    if model_ref <= 0:
-        print("  Level has no Model reference.", file=sys.stderr)
-        return 1
-
-    model_idx = model_ref - 1
-    if model_idx >= len(pkg.exports):
-        print(f"  Model reference {model_ref} out of range.", file=sys.stderr)
-        return 1
-
-    model_name = pkg.resolve_name(pkg.exports[model_idx]['name_idx'])
-    print(f"  Level's Model: export [{model_idx}] ({model_name})")
-
-    # Read the Model data
-    model_data = pkg.get_export_data(model_idx)
-    if model_data is None:
-        print("  Model has no data.", file=sys.stderr)
-        return 1
-
-    # Skip properties
-    model_off = skip_properties(model_data, 0, pkg.resolve_name)
-    print(f"  Model data: {len(model_data)} bytes, properties end at offset {model_off}")
-
-    # Parse the Model's native data
-    reader = ModelReader(model_data, model_off, pkg.version)
-    model_obj = reader.read_model()
-
-    print(f"  Vectors: {len(model_obj['vectors'])}, Verts: {len(model_obj['verts'])}, "
-          f"Nodes: {len(model_obj['nodes'])}, Surfaces: {len(model_obj['surfaces'])}")
-
-    if len(model_obj['nodes']) == 0:
-        print("  No BSP nodes found.", file=sys.stderr)
-        return 1
-
-    polygons = extract_polygons_from_model(model_obj)
-    print(f"  Extracted {len(polygons)} polygons")
-
-    if polygons:
-        export_obj(polygons, output_path)
-    else:
-        print("  No polygons extracted.", file=sys.stderr)
-        return 1
 
 
 # ── Library API ────────────────────────────────────────────────────────
@@ -646,12 +572,30 @@ class ExtractionResult:
         self.surfaces = 0
         self.verts = 0
         self.polygons = 0
+        self.polygons_data = []
+        self.triangles = []
         self.output_path = ""
+        self.format = "obj"
 
 
-def extract_map(map_path, output_path=None, progress_callback=None):
-    """Full extraction pipeline.  Calls progress_callback(msg, pct) if given."""
+def export_map(polygons, output_path, fmt="obj"):
+    """Write geometry in the requested format.  Returns output_path."""
+    from exporters import write_obj_mtl, write_gltf
+
+    if fmt == "obj":
+        return write_obj_mtl(polygons, output_path)
+    elif fmt == "objmtl":
+        return write_obj_mtl(polygons, output_path)
+    elif fmt == "gltf":
+        return write_gltf(polygons, output_path)
+    else:
+        raise ValueError(f"Unknown format: {fmt}")
+
+
+def extract_map(map_path, output_path=None, fmt="obj", progress_callback=None):
+    """Full extraction pipeline.  fmt: 'obj', 'objmtl', 'gltf'"""
     result = ExtractionResult()
+    result.format = fmt
     result.map_name = os.path.basename(map_path)
 
     def report(msg, pct=None):
@@ -665,8 +609,10 @@ def extract_map(map_path, output_path=None, progress_callback=None):
     result.exports_count = pkg.export_count
     result.imports_count = pkg.import_count
 
+    ext_map = {"obj": ".obj", "objmtl": ".obj", "gltf": ".gltf"}
+    default_ext = ext_map.get(fmt, ".obj")
     if not output_path:
-        output_path = os.path.splitext(map_path)[0] + ".obj"
+        output_path = os.path.splitext(map_path)[0] + default_ext
 
     report("Locating Level...", 5)
     level_idx = None
@@ -741,12 +687,28 @@ def extract_map(map_path, output_path=None, progress_callback=None):
     report("Extracting polygons...", 50)
     polygons = extract_polygons_from_model(model_obj)
     result.polygons = len(polygons)
+    result.polygons_data = polygons
+
+    # Attach texture names to polygons
+    for p in polygons:
+        si = p['surf_index']
+        if si < len(model_obj['surfaces']):
+            tex_idx = model_obj['surfaces'][si]['texture']
+            p['texture_name'] = pkg.resolve_texture_name(tex_idx)
+        else:
+            p['texture_name'] = None
+
+    # Build triangle list for preview
+    for p in polygons:
+        verts = p['vertices']
+        for i in range(1, len(verts) - 1):
+            result.triangles.append((verts[0], verts[i], verts[i + 1]))
 
     if not polygons:
         raise ValueError("No polygons extracted from model.")
 
-    report("Writing OBJ...", 70)
-    export_obj(polygons, output_path)
+    report(f"Writing {fmt.upper()}...", 70)
+    export_map(polygons, output_path, fmt)
     result.output_path = output_path
 
     report("Done!", 100)
