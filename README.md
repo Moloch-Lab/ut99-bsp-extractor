@@ -1,20 +1,35 @@
 # UT99 BSP Extractor
 
-Extracts BSP polygon geometry from Unreal Tournament 99 `.unr` map files and exports to Wavefront OBJ (with MTL) or glTF 2.0 formats, with UV coordinates and vertex normals.
+Extracts BSP polygon geometry from Unreal Tournament 99 `.unr` map files and exports to Wavefront OBJ (with MTL) or glTF 2.0 formats, with UV coordinates and vertex normals. Cross-platform GUI with 3D wireframe preview, batch processing, and lightmap UV support.
+
+## Downloads
+
+| Platform | File | How to run |
+|----------|------|------------|
+| Linux | `UT99-BSP-Extractor-linux` | `chmod +x && ./UT99-BSP-Extractor-linux` |
+| Linux (zip) | `UT99-BSP-Extractor-Linux.zip` | Unzip, then same as above |
+| Windows | `UT99-BSP-Extractor-windows.exe` | Double-click |
+| macOS | `UT99-BSP-Extractor-macos` | `chmod +x && ./UT99-BSP-Extractor-macos` |
+
+> Windows and macOS builds are produced automatically by GitHub Actions when a tag is pushed. See [`.github/workflows/build.yml`](.github/workflows/build.yml).
+
+## Features
+
+- **Cross-platform GUI** — Native look on Linux, Windows, and macOS (PySide6)
+- **Batch processing** — Drag & drop multiple maps, extract all at once
+- **3D wireframe preview** — Rotate with mouse, zoom with scroll wheel
+- **3 export formats** — OBJ (raw), OBJ+MTL (grouped by texture), glTF 2.0 (with lightmap UVs as `TEXCOORD_1`)
+- **Modern dark theme** — Easy on the eyes, consistent across platforms
+- **Settings persistence** — Remembers window size, last directory, format choice
+- **Keyboard shortcuts** — Ctrl+O (add files), Ctrl+E (extract), Delete (remove)
+- **Context menus** — Right-click queue items to remove, show in folder, quick-extract
+- **Progress ETA** — Estimated time remaining during batch extraction
+- **Stats dashboard** — Live polygon count, maps queued, last run time
+- **Texture name resolution** — Reads texture references from package import/export tables
+- **Lightmap UV support** — Second UV set in glTF output (`TEXCOORD_1`)
+- **Python API** — `from ut99bsp import extract_map` for scripting
 
 ## Quick Start
-
-### Download (no Python required)
-
-Grab the standalone executable for your platform from the [releases page](https://github.com/Moloch-Lab/ut99-bsp-extractor/releases):
-
-| Platform | File |
-|----------|------|
-| Linux | `UT99-BSP-Extractor-linux` |
-| Windows | `UT99-BSP-Extractor-windows.exe` |
-| macOS | `UT99-BSP-Extractor-macos` |
-
-Windows and macOS builds are produced automatically by [GitHub Actions](.github/workflows/build.yml) when a tag is pushed. Maintainers push a tag and the workflow builds on all three OS runners, then uploads the artifacts to the release.
 
 ### Install from source with one command
 

@@ -29,11 +29,26 @@ jobs:
           pip install -e .
           pyinstaller --onefile --windowed --name "UT99-BSP-Extractor" --add-data "src/ut99bsp:ut99bsp" ut99_bsp_gui.py
 
+      - name: Rename binary per platform
+        run: |
+          case "${{ runner.os }}" in
+            Linux)   mv dist/UT99-BSP-Extractor dist/UT99-BSP-Extractor-linux    ;;
+            Windows) mv dist/UT99-BSP-Extractor.exe dist/UT99-BSP-Extractor-windows.exe ;;
+            macOS)   mv dist/UT99-BSP-Extractor dist/UT99-BSP-Extractor-macos    ;;
+          esac
+
+      - name: Package Linux zip
+        if: runner.os == 'Linux'
+        run: |
+          cd dist
+          echo "See README.txt in the project root for install instructions" > README.txt
+          zip -j UT99-BSP-Extractor-Linux.zip UT99-BSP-Extractor-linux
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: UT99-BSP-Extractor-${{ runner.os }}
-          path: dist/UT99-BSP-Extractor*
+          path: dist/UT99-BSP-Extractor-*
 
   release:
     needs: build
@@ -50,12 +65,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          shopt -s nullglob
-          for f in UT99-BSP-Extractor*; do
-            case "$f" in
-              *Linux*)   mv "$f" "UT99-BSP-Extractor-linux"    ;;
-              *Windows*) mv "$f" "UT99-BSP-Extractor-windows.exe" ;;
-              *macOS*)   mv "$f" "UT99-BSP-Extractor-macos"    ;;
-            esac
-          done
+          ls -lh
           gh release upload "${GITHUB_REF_NAME}" UT99-BSP-Extractor-* --clobber
