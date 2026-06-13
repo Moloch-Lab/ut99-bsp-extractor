@@ -159,13 +159,15 @@ def _rgb565(v):
 
 def _write_png(path, pixels, w, h, has_alpha=True):
     """Write raw RGBA pixels to a PNG file (no external deps)."""
-    raw = b""
+    raw = bytearray(w * h * 4 + h)
+    idx = 0
     for y in range(h):
-        raw += b"\x00"
-        for x in range(w):
-            off = (y * w + x) * 4
-            raw += bytes(pixels[off:off+4])
-    compressed = zlib.compress(raw)
+        raw[idx] = 0
+        idx += 1
+        base = y * w * 4
+        raw[idx:idx + w * 4] = pixels[base:base + w * 4]
+        idx += w * 4
+    compressed = zlib.compress(bytes(raw))
 
     def _chunk(ctype, data):
         chunk = ctype + data
@@ -221,6 +223,7 @@ class TextureInfo:
         self.format = 0  # 0=DXT1, 1=DXT3, 2=DXT5, 3=P8, 4=RGBA7, 5=RGB8, 6=RGBA8
         self.mipmaps = []
         self.export_idx = -1
+        self.palette_data = None  # 1024 bytes (256 RGBA colors) for P8 textures
 
 
 class UTXReader:
@@ -259,11 +262,18 @@ class UTXReader:
             if off >= len(self.data):
                 break
             try:
-                length, off = _read_compact_index(self.data, off)
-                if off + length > len(self.data):
-                    break
-                name = self.data[off:off+length].decode('windows-1252', errors='replace').rstrip('\0')
-                off += length
+                if self.version >= 64:
+                    length, off = _read_compact_index(self.data, off)
+                    if off + length > len(self.data):
+                        break
+                    name = self.data[off:off+length].decode('windows-1252', errors='replace').rstrip('\0')
+                    off += length
+                else:
+                    null = self.data.find(b'\0', off)
+                    if null == -1 or null >= len(self.data):
+                        break
+                    name = self.data[off:null].decode('windows-1252', errors='replace')
+                    off = null + 1
                 if off + 4 > len(self.data):
                     break
                 flags = struct.unpack('<I', self.data[off:off+4])[0]
@@ -363,20 +373,281 @@ class UTXReader:
                     name = self.resolve_name(exp['name_idx'])
                 except IndexError:
                     continue
-                tex = TextureInfo()
-                tex.name = name
-                tex.export_idx = idx
-                self._parse_mipmap(data, tex)
+                # Texture class exports always have properties before mip data;
+                # Mipmap class may or may not. Skip non-skip parse for Texture.
+                if class_name == "Texture":
+                    tex = TextureInfo()
+                    tex.name = name
+                    tex.export_idx = idx
+                    self._parse_mipmap(data, tex, skip_props=True)
+                else:
+                    tex = TextureInfo()
+                    tex.name = name
+                    tex.export_idx = idx
+                    self._parse_mipmap(data, tex)
+                    if not tex.mipmaps:
+                        tex2 = TextureInfo()
+                        tex2.name = name
+                        tex2.export_idx = idx
+                        self._parse_mipmap(data, tex2, skip_props=True)
+                        tex = tex2 if tex2.mipmaps else tex
                 if tex.width > 0 and tex.mipmaps:
+                    first_fmt = tex.mipmaps[0]['format']
+                    if first_fmt == 3:
+                        pal = self._get_palette_data(idx)
+                        if pal:
+                            tex.palette_data = pal
                     self.textures.append(tex)
 
-    def _parse_mipmap(self, data, tex):
+    def _get_palette_data(self, export_idx):
+        """Get decoded RGBA palette for a P8 texture. Returns 1024 bytes (256 RGBA colors) or None."""
+        for i, exp in enumerate(self.exports):
+            if i == export_idx:
+                data = self.get_export_data(i)
+                if not data:
+                    return None
+                off = 0
+                while off < len(data):
+                    nc, off = _read_compact_index(data, off)
+                    if self.resolve_name(nc) == 'None':
+                        break
+                    if off >= len(data):
+                        break
+                    ib = data[off]
+                    off += 1
+                    pt = ib & 0xF
+                    nm = self.resolve_name(nc)
+                    if nm == 'Palette' and pt == 5:
+                        palette_idx, _ = _read_compact_index(data, off)
+                        if palette_idx >= 0:
+                            pal_data = self.get_export_data(palette_idx)
+                            if pal_data:
+                                pal_sp = self._skip_properties(pal_data, 0)
+                                if pal_sp >= len(pal_data):
+                                    return None
+                                pal_cnt, pal_off = _read_compact_index(pal_data, pal_sp)
+                                if pal_cnt != 256 or pal_off + 1024 > len(pal_data):
+                                    return None
+                                raw_colors = pal_data[pal_off:pal_off+1024]
+                                rgba = bytearray(1024)
+                                for j in range(256):
+                                    b = raw_colors[j*4]
+                                    g = raw_colors[j*4 + 1]
+                                    r = raw_colors[j*4 + 2]
+                                    a = raw_colors[j*4 + 3]
+                                    rgba[j*4] = r
+                                    rgba[j*4 + 1] = g
+                                    rgba[j*4 + 2] = b
+                                    rgba[j*4 + 3] = a
+                                return bytes(rgba)
+                        break
+                    if pt == 5:
+                        off = _read_compact_index(data, off)[1]
+                    elif pt == 1:
+                        off += 1
+                    elif pt == 2:
+                        off += 4
+                    elif pt == 10:
+                        st, off = _read_compact_index(data, off)
+                        si = (ib >> 4) & 0x7
+                        ps = {0:1, 1:2, 2:4, 3:12, 4:16}.get(si, 4)
+                        off += ps
+                    elif pt == 4:
+                        off += 4
+                    else:
+                        break
+        return None
+
+    def _skip_properties(self, data, off):
+        """Skip UE1 property block. Properties are name=value pairs terminated by None (CI=0 or name='None')."""
+        max_off = len(data)
+        while off < max_off:
+            try:
+                name_ci, off = _read_compact_index(data, off)
+            except (IndexError, struct.error):
+                break
+            try:
+                if self.resolve_name(name_ci) == 'None':
+                    break
+            except IndexError:
+                pass
+            if off >= max_off:
+                break
+            info_byte = data[off]
+            off += 1
+            prop_type = info_byte & 0xF
+            is_array = bool(info_byte & 0x80)
+            
+            if prop_type in (5, 6, 8):
+                if is_array:
+                    try:
+                        count, off = _read_compact_index(data, off)
+                    except (IndexError, struct.error):
+                        break
+                    for _ in range(min(count, 1000)):
+                        try:
+                            _, off = _read_compact_index(data, off)
+                        except (IndexError, struct.error):
+                            break
+                else:
+                    try:
+                        _, off = _read_compact_index(data, off)
+                    except (IndexError, struct.error):
+                        break
+            elif prop_type == 10:
+                try:
+                    _, off = _read_compact_index(data, off)
+                except (IndexError, struct.error):
+                    break
+                size_info = (info_byte >> 4) & 0x7
+                if size_info == 0:
+                    prop_size = 1
+                elif size_info == 1:
+                    prop_size = 2
+                elif size_info == 2:
+                    prop_size = 4
+                elif size_info == 3:
+                    prop_size = 12
+                elif size_info == 4:
+                    prop_size = 16
+                elif size_info == 5:
+                    if off >= max_off:
+                        break
+                    prop_size = data[off]
+                    off += 1
+                elif size_info == 6:
+                    if off + 2 > max_off:
+                        break
+                    prop_size = struct.unpack('<H', data[off:off+2])[0]
+                    off += 2
+                elif size_info == 7:
+                    if off + 4 > max_off:
+                        break
+                    prop_size = struct.unpack('<I', data[off:off+4])[0]
+                    off += 4
+                else:
+                    break
+                if prop_size < 0 or off + prop_size > max_off:
+                    break
+                off += prop_size
+            elif prop_type == 9:
+                try:
+                    count, off = _read_compact_index(data, off)
+                except (IndexError, struct.error):
+                    break
+                for _ in range(min(count, 1000)):
+                    try:
+                        _, off = _read_compact_index(data, off)
+                    except (IndexError, struct.error):
+                        break
+            elif prop_type == 7:
+                try:
+                    length, off = _read_compact_index(data, off)
+                except (IndexError, struct.error):
+                    break
+                if length < 0 or off + length > max_off:
+                    break
+                off += length
+            elif prop_type in (1, 2, 3, 4):
+                elem_size = 1 if prop_type == 1 else 4
+                if is_array:
+                    try:
+                        count, off = _read_compact_index(data, off)
+                    except (IndexError, struct.error):
+                        break
+                    if count < 0 or count > 100000:
+                        break
+                    off += count * elem_size
+                else:
+                    off += elem_size
+            else:
+                break
+        return off
+
+    def _parse_mipmap(self, data, tex, skip_props=False):
         off = 0
-        while off < len(data):
+        if skip_props:
+            off = self._skip_properties(data, off)
+            pal_ubits, pal_vbits, pal_usize, pal_vsize = 0, 0, 0, 0
+            temp_off = 0
+            while temp_off < off:
+                try:
+                    nc, temp_off = _read_compact_index(data, temp_off)
+                except (IndexError, struct.error):
+                    break
+                if self.resolve_name(nc) == 'None':
+                    break
+                if temp_off >= off:
+                    break
+                ib = data[temp_off]
+                temp_off += 1
+                pt = ib & 0xF
+                is_array = bool(ib & 0x80)
+                if pt == 5:
+                    try:
+                        _, temp_off = _read_compact_index(data, temp_off)
+                    except (IndexError, struct.error):
+                        break
+                elif pt == 1:
+                    val = data[temp_off]
+                    temp_off += 1
+                    nm = self.resolve_name(nc)
+                    if nm == 'UBits': pal_ubits = val
+                    elif nm == 'VBits': pal_vbits = val
+                elif pt in (2, 3, 4):
+                    if is_array:
+                        try:
+                            count, temp_off = _read_compact_index(data, temp_off)
+                        except (IndexError, struct.error):
+                            break
+                        if count < 0 or count > 1000:
+                            break
+                        temp_off += count * 4
+                    else:
+                        val = struct.unpack('<i', data[temp_off:temp_off+4])[0]
+                        temp_off += 4
+                        nm = self.resolve_name(nc)
+                        if nm == 'USize': pal_usize = val
+                        elif nm == 'VSize': pal_vsize = val
+                elif pt == 10:
+                    try:
+                        _, temp_off = _read_compact_index(data, temp_off)
+                    except (IndexError, struct.error):
+                        break
+                    si = (ib >> 4) & 0x7
+                    ps = {0:1, 1:2, 2:4, 3:12, 4:16}.get(si, 4)
+                    if ps < 0 or temp_off + ps > len(data):
+                        break
+                    temp_off += ps
+                else:
+                    break
+            if pal_ubits > 0 or pal_vbits > 0:
+                tex.ubits = pal_ubits
+                tex.vbits = pal_vbits
+                tex.usize = pal_usize
+                tex.vsize = pal_vsize
+        # After properties (skip_props=True), data starts with MipCount CI.
+        # Without property skip, data starts with per-mip headers directly.
+        max_mip_loop = 24
+        p8_off = off
+        if skip_props:
+            try:
+                mip_count, off = _read_compact_index(data, off)
+            except (IndexError, struct.error):
+                mip_count = 24
+            if 0 < mip_count <= max_mip_loop:
+                max_mip_loop = mip_count
+        for _ in range(max_mip_loop):
+            if off >= len(data):
+                break
             try:
                 mip_w, off = _read_compact_index(data, off)
                 mip_h, off = _read_compact_index(data, off)
-                if mip_w == 0 or mip_h == 0:
+                if mip_w <= 0 or mip_h <= 0:
+                    break
+                if skip_props and (mip_w & (mip_w - 1)) != 0:
+                    break
+                if skip_props and (mip_h & (mip_h - 1)) != 0:
                     break
                 u_flag, off = _read_compact_index(data, off)
                 u_val, off = _read_compact_index(data, off)
@@ -384,7 +655,6 @@ class UTXReader:
                 if off >= len(data):
                     break
                 if u_flag in (0, 1, 2):
-                    bpp = 8
                     block_size = 8 if u_flag == 0 else 16
                     bw = max((mip_w + 3) // 4, 1)
                     bh = max((mip_h + 3) // 4, 1)
@@ -397,7 +667,7 @@ class UTXReader:
                     mip_size = mip_w * mip_h * 4
                 else:
                     break
-                if off + mip_size > len(data):
+                if mip_size <= 0 or off + mip_size > len(data):
                     break
                 mip_data = data[off:off+mip_size]
                 if tex.width == 0:
@@ -410,6 +680,44 @@ class UTXReader:
                 off += mip_size
             except (struct.error, ValueError):
                 break
+        if not tex.mipmaps and skip_props and (getattr(tex, 'ubits', 0) > 0 or getattr(tex, 'vbits', 0) > 0):
+            self._parse_p8_mipmap(data, tex, p8_off)
+
+    def _parse_p8_mipmap(self, data, tex, off):
+        """Parse P8 (palettized) texture mip data.
+        v68+: MipCount CI + raw pixel data per mip level.
+        v61-v67: raw pixel data per mip level (no MipCount header).
+        """
+        mip_count = 0
+        if self.version >= 68:
+            try:
+                mip_count, off = _read_compact_index(data, off)
+            except (IndexError, struct.error):
+                return
+            if mip_count <= 0 or mip_count > 24:
+                return
+        usize = getattr(tex, 'usize', 0) or (1 << getattr(tex, 'ubits', 0))
+        vsize = getattr(tex, 'vsize', 0) or (1 << getattr(tex, 'vbits', 0))
+        if usize <= 0 or vsize <= 0:
+            return
+        if mip_count <= 0:
+            mip_count = max(usize, vsize).bit_length()
+        max_levels = min(16, mip_count)
+        for ml in range(max_levels):
+            mw = max(usize >> ml, 1)
+            mh = max(vsize >> ml, 1)
+            mip_size = mw * mh
+            if off + mip_size > len(data):
+                break
+            if tex.width == 0:
+                tex.width = mw
+                tex.height = mh
+            tex.mipmaps.append({
+                'width': mw, 'height': mh,
+                'format': 3,
+                'data': data[off:off+mip_size],
+            })
+            off += mip_size
 
 
 def decode_texture(tex, mip_level=0):
@@ -425,6 +733,17 @@ def decode_texture(tex, mip_level=0):
         return _decompress_dxt3(data, w, h)
     elif fmt == 2:
         return _decompress_dxt5(data, w, h)
+    elif fmt == 3:
+        if not tex.palette_data or len(tex.palette_data) < 768:
+            return None
+        rgba = bytearray(w * h * 4)
+        for i in range(w * h):
+            idx = data[i]
+            rgba[i*4] = tex.palette_data[idx*4]
+            rgba[i*4 + 1] = tex.palette_data[idx*4 + 1]
+            rgba[i*4 + 2] = tex.palette_data[idx*4 + 2]
+            rgba[i*4 + 3] = tex.palette_data[idx*4 + 3]
+        return bytes(rgba)
     elif fmt == 5:
         return data
     elif fmt == 6:
@@ -453,6 +772,8 @@ def find_texture_packages(map_path, search_paths=None):
     """Find .utx files that the map references."""
     if search_paths is None:
         search_paths = []
+    elif isinstance(search_paths, str):
+        search_paths = [search_paths]
     map_dir = os.path.dirname(os.path.abspath(map_path))
     search_paths = [map_dir] + search_paths + [
         os.path.join(map_dir, "Textures"),

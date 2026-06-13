@@ -63,9 +63,10 @@ def skip_properties(data, offset, name_resolver=None):
     """Skip UE1 properties (1-byte flags format)."""
     while offset < len(data):
         name_ci, offset = read_compact_index(data, offset)
-        if name_ci == 0:
-            break
-        if name_resolver and name_resolver(name_ci) == "None":
+        if name_resolver:
+            if name_resolver(name_ci) == "None":
+                break
+        elif name_ci == 0:
             break
         info_byte = data[offset]
         offset += 1
